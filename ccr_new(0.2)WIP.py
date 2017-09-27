@@ -25,7 +25,7 @@ class CCR:
     def __init__(self, filename=""):
         """
         Uses Selenium to log-in to CCR and create cases.
-        Enters claim details using data extracted from specially formatteed
+        Enters claim details using data extracted from specially formatted
         spredsheet.
         Args:
             filename - Excel file with test data
@@ -78,7 +78,8 @@ class CCR:
         if not os.path.exists(results_folder):
             os.makedirs(results_folder)
         #Results filename - based or source filename but with date/time added
-        results_filename = os.path.splitext(self.filename)[0] + time.strftime("_results_[%Y.%m.%d_%H.%M.%S].xlsx")
+        results_filename = (os.path.splitext(self.filename)[0]
+                            +time.strftime("_results_[%Y.%m.%d_%H.%M.%S].xlsx"))
         results_file = os.path.join(results_folder, results_filename)
 
         #Read defined test data from spreadsheet
@@ -91,7 +92,7 @@ class CCR:
         ws = self.wb.get_sheet_by_name("Run")
         #Find positions of each expected column heading
         columns = self.excel_column_positions("Run", heading_row=6, leftcol=1, maxcol=20)
-
+        #Process each row from spreadsheet
         for row in range(7, endrow+1):
             print "Processing row:", row
             #Skip to next row (scenario) if skip set
@@ -100,7 +101,7 @@ class CCR:
                 print "Skipped - skip flag set."
                 continue
 
-            #Create tab for recording results
+            #Create tab for recording results for the row
             results_name = "Results_"+str(row)
             self.wb.create_sheet(title=results_name)
             #Results sheet
@@ -138,7 +139,7 @@ class CCR:
             if message.endswith("Skipping to next row."):
                 continue
 
-            #Get CCR version
+            #Get CCR version from screen and write to spreadsheet
             result_row += 1
             rs.cell(row = result_row, column = 1).value = "Version: "+self.get_version()
 
@@ -167,6 +168,7 @@ class CCR:
             if basic_key !="none":
                 basic_args = basic_data.get(basic_key,"")
                 if basic_args:
+                    print "BARGS:",basic_args
                     self.basic_fee(**basic_args)
                     message = "Basic fee:"
 
@@ -181,7 +183,7 @@ class CCR:
                     self.expenses(**expen_args)
                     message = "Expenses:"
 
-            #Read the figures from CCR front-end
+            #Read some figures from CCR front-end
             figures = self.read_fees()
             print figures
             #Write results to results tab
@@ -194,7 +196,9 @@ class CCR:
 
         #Add yellow stripe to top of each tab, to make results spreadsheet
         #distinctive
-        fill = openpyxl.styles.PatternFill(start_color='50FFFF00', end_color='50888800', fill_type='solid')
+        fill = openpyxl.styles.PatternFill(start_color='50FFFF00',
+                                            end_color='50888800',
+                                            fill_type='solid')
         for ws in self.wb.worksheets:
             for column in range(1, 30):
                 ws.cell(row=1,column=column).fill = fill
@@ -439,7 +443,7 @@ class CCR:
                     keep_going = False
 
     def search_results(self):
-        """Examine page of search results
+        """Examine page of CCR search results
 
         ['T20140001','T20140001\439','1','233JK','MCMILLAN','LINDSAY','19/01/1927','28/11/2013','07/07/2014','N']
         """
@@ -471,6 +475,10 @@ class CCR:
                     ,**kwargs):
         """Start new CCR claim.
         Completes initial details
+        Args:
+            (details to be added!)
+            **kwargs included in case surplus arguments supplied, such as
+            value read from a spreadsheet
         """
         driver = self.driver
 
@@ -527,15 +535,10 @@ class CCR:
 
         #Add defendants
         self.add_defendants(defendants)
-
-        ##self.field_finder()
-        #Move the below to excel_run <<<<
-
         #Add basic fee
         self.basic_fee()
         #Calculate fee
         self.calc_fee()
-
 
     def add_defendants(self,maat_ids=["3264731"]):
         """Add one or more defendants to CCR claim based on supplied MAAT IDs
@@ -544,7 +547,8 @@ class CCR:
         On return to main claim screen sets first defendant to be "Main Def"
         if none already ticked.
         Args:
-            maat_ids - list of maat IDs to be used in search for e.g. ["3264731","3264732","3264733"]
+            maat_ids - list of maat IDs to be used in search for
+                e.g. ["3264731","3264732","3264733"]
         """
         driver = self.driver
 
@@ -594,7 +598,7 @@ class CCR:
         """Enter Basic Fee details
         Relevant section of the claim screen must be available for this to work
         Args:
-            basic_ce - Claim Element value
+            claim_element - Claim Element value
         """
         driver = self.driver
         #Basic fee fields are within this HTML table
@@ -639,7 +643,7 @@ class CCR:
                 ):
 
         """Complete expense - under construction!
-        Needs updating because id's shift when new expenses row added
+        May needs updating because id's shift when new expenses row added
         """
         driver = self.driver
 
@@ -690,21 +694,6 @@ class CCR:
         ##WebDriverWait(self.driver,10).until(lambda driver: '<div id="pleaseWait"><span>Please wait...</span></div>' not in driver.page_source)
         ##self.save_page_source()
 
-        #Read figures following calculation
-        #Warning several fields share the same ID e.g. "agfsFeeTotal"
-        table = driver.find_element_by_id("basicFeeTable")
-
-        rpa = table.find_element_by_id("requestedPaymentAmount").get_attribute("value")
-
-        #looks like there each "agfsFeeTotal" figure is duplicated with a hidden and displayed version of each
-        #so need to filter out one of each pair
-        others =    [e.get_attribute("value")
-                    for e in table.find_elements_by_id("agfsFeeTotal")
-                    if e.get_attribute("type")!="hidden"]
-
-        ##print "After calc"
-        ##print rapa
-        ##print others
 
     def read_fees(self):
         """Reads some fee figures
@@ -721,7 +710,6 @@ class CCR:
         table_ids = [t.get_attribute("id") for t in tables]
         print table_ids
         """
-
         #Read Basic Fee
         #Warning several fields share the same ID e.g. "agfsFeeTotal"
         table = driver.find_element_by_id("basicFeeTable")
@@ -755,6 +743,7 @@ class CCR:
         return figures
 
     def logout(self):
+        """Logout from CCR"""
         driver = self.driver
 
         #Find all (any) Exit buttons on the screen
@@ -762,7 +751,6 @@ class CCR:
         #If any found, click the first one
         if exits:
             exits[0].click()
-
         #Click alert, if there is one
         try:
             alert = driver.switch_to_alert()
@@ -898,22 +886,12 @@ class CCR:
         #driver.switch_to_window(current_win)
         return message
 
-
     def save_page_source(self):
+        """Saves page source to file (filename automatic, includes date/time)
+        """
         filename = time.strftime("page_source_%d-%b-%Y_%H.%M.%S.txt")
         with open(filename,"w") as fout:
             fout.write(driver.page_source.encode("utf-8"))
-
-#username = "FITS1-BEEHAIDACG"
-#password = "welcome123!"
-#url = "https://syspor10.laadev.co.uk/"
-#url = "https://stgpor10.laadev.co.uk/"
-#go.direct(url=url, username=username, password=password, )
-
-#Direct Login
-##ffp = r"E:\Test\Firefox_Profiles\james_conlon_ccr_aws"
-##url = "http://ccr.hosting.legalaid.technology/ccr/AutoLogin"
-##go.direct_run(url=url, ffp=ffp)
 
 
 if __name__ == "__main__":
