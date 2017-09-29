@@ -1,3 +1,4 @@
+#!/usr/bin/evn python
 
 """
 Selenium script that enters details into CCR based on data read from
@@ -5,6 +6,8 @@ an Excel spreadsheet.
 
 0.1 - initial icomplete version that uses ccr_data(0.1).xlsx
 0.2 - changed to use different spreadsheet format
+0.3 - Removed basic_fee and calc_fee calls from CCR.create_claim
+        Modified CCR.basic_fee() to handle disabled fields. Shebang line added!
 """
 
 #Standard Selenium imports
@@ -34,11 +37,17 @@ class CCR:
         self.tabs = []
         #Excel filename
         self.filename = filename
-        #Run tests using data from self.filename spreadsheet
-        self.excel_run()
+
+        #Run tests using data from self.filename spreadsheet if supplied
+        #otherwise use direct run
+        if filename:
+            self.excel_run()
+        else:
+            self.direct_run()
 
     def direct_run(self, url, username = "", password = "", ffp = ""):
         """Directly interact with CCR, not using spreadsheet data.
+        Mainly used to try things out
         """
         login_response = self.login(url, username, password, ffp)
         if login_response:
@@ -100,7 +109,6 @@ class CCR:
             if skip:
                 print "Skipped - skip flag set."
                 continue
-
             #Create tab for recording results for the row
             results_name = "Results_"+str(row)
             self.wb.create_sheet(title=results_name)
@@ -154,7 +162,7 @@ class CCR:
                     defendants = claim_args.get("defendants","")
                     defendants = [c.strip() for c in str(defendants).split(",")]
                     claim_args["defendants"] = defendants
-                    print "Claim details:",claim_args
+                    ##print "Claim details:",claim_args
                     self.create_claim(**claim_args)
                     message = "Claim completed using : "+claim_key
             #Write results to results tab
@@ -168,7 +176,6 @@ class CCR:
             if basic_key !="none":
                 basic_args = basic_data.get(basic_key,"")
                 if basic_args:
-                    print "BARGS:",basic_args
                     self.basic_fee(**basic_args)
                     message = "Basic fee:"
 
@@ -535,10 +542,7 @@ class CCR:
 
         #Add defendants
         self.add_defendants(defendants)
-        #Add basic fee
-        self.basic_fee()
-        #Calculate fee
-        self.calc_fee()
+
 
     def add_defendants(self,maat_ids=["3264731"]):
         """Add one or more defendants to CCR claim based on supplied MAAT IDs
@@ -611,6 +615,33 @@ class CCR:
         #them to become available (look for style="display: none" attribute)
         WebDriverWait(self.driver,10).until(lambda driver: table.find_element_by_id("ppe").get_attribute("style")!="display: none")
 
+        def update_field(elem_id, value):
+            """Update field if it's displayed
+            Nb - uses table value found above
+            Args:
+                elem_id - element id (str)
+                value - value to enter
+                """
+            if value:
+                field = table.find_element_by_id(elem_id)
+                #Don't try to update if the field is not on display
+                #Note sure where ";" on end comes from! Don't see in source!
+                if field.get_attribute("style")!="display: none;":
+                    print ">>",elem_id, field.get_attribute("style")
+                    table.find_element_by_id(elem_id).clear()
+                    table.find_element_by_id(elem_id).send_keys(value)
+                else:
+                    print "Field:", elem_id, "-not on display."
+
+        #Complete PPE, Numer of Attendance Days, No of Prosecution Witnesses
+        #No of Defendants and No of Cases fields
+        update_field("ppe", ppe)
+        update_field("numberOfAttendanceDays", attendance)
+        update_field("numberOfWitnesses", witnesses)
+        update_field("defendants", defendants)
+        update_field("cases", cases)
+
+        """
         #PPE
         table.find_element_by_id("ppe").clear()
         table.find_element_by_id("ppe").send_keys(ppe)
@@ -632,6 +663,7 @@ class CCR:
         if cases:
             table.find_element_by_id("cases").clear()
             table.find_element_by_id("cases").send_keys(cases)
+        """
 
     def expenses(self,
                 claim_element = "Conferences & Views - Car",
