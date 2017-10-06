@@ -179,16 +179,26 @@ class CCR:
                     self.basic_fee(**basic_args)
                     message = "Basic fee:"
 
-            #Expenses part of scenario
-            # NEEDES UPDATING TO COPE WITH MULTIPLE ITEMS PER CLAIM
+            # Expenses part of scenario
+            # Treat as comma-separated values
             message = "Expenses not entered"
-            expen_key = ws.cell(row=row, column=columns["expenses"]).value
-            expen_key = str(expen_key).lower()
-            if expen_key !="none":
-                expen_args = expen_data.get(expen_key,"")
-                if expen_args:
-                    self.expenses(**expen_args)
-                    message = "Expenses:"
+            expen_keys = ws.cell(row=row, column=columns["expenses"]).value
+            if expen_keys:
+                #Extract comma-separated values also convert to lower-case and strip spaces
+                expen_keys = [str(key).lower().strip() for key in expen_keys.split(",")]
+                #Enter details from each expenses key
+                #NEED TO ADD HANDLING FOR PRESSING NEW ADD CLAIM ELEMENT BUTTON
+                rowpos = 0#row position for entering expenses on screen
+                for expen_key in expen_keys:
+                    if expen_key !="none":
+                        expen_args = expen_data.get(expen_key,"")
+                        if expen_args:
+                            self.expenses(row=rowpos, **expen_args)
+                            rowpos+=1
+                            message = "Expenses:"
+
+            #Calculate Fee
+            self.calc_fee()
 
             #Read some figures from CCR front-end
             figures = self.read_fees()
@@ -250,6 +260,12 @@ class CCR:
             for heading, column in heading_columns.iteritems():
                 if heading != "label":
                     val = ws.cell(row=row, column=column).value
+
+                    #Special value generation using date_maker function
+                    if type(val) in (str, unicode):
+                        if val.startswith("#"):
+                            val = data_maker(val)
+
                     #Some reformatting of data
                     #Ensure date are d/m/y strings
                     if type(val) is datetime.datetime:
@@ -523,13 +539,26 @@ class CCR:
         Select(driver.find_element_by_id("courtCode")).select_by_visible_text(ccourt)
         Select(driver.find_element_by_id("prosecutingAuthorityCode")).select_by_visible_text(prosecution)
 
-        #Add Claim Elements
-        driver.find_element_by_id("bAddClaimElements").click()
+        #Add Claim Elements - can get stuck here if indictment number not unique
+        #within some other things
+        while True:
+            driver.find_element_by_id("bAddClaimElements").click()
 
-        #Error check
-        errors = self.error_check()
-        if errors:
-            print "".join(errors)
+            #Error check
+            errors = self.error_check()
+            if errors:
+                print "".join(errors)
+
+            #Indictment number needs to be unique (in combination with something else)
+            #Increment the number if error message displayed
+            if "The entered case already exists. Please increment the Indictment Number (for a Severed Case or Solicitor Advocate claim) or enter as a Re-trial" in errors:
+                indictment_no = driver.find_element_by_id("indictmentNumber")
+                value = indictment_no.get_attribute("value")
+                value = str(int(value)+1)
+                indictment_no.clear()
+                indictment_no.send_keys(value)
+            else:
+                break
 
         #Trial details
         Select(driver.find_element_by_id("offenceClass")).select_by_visible_text("A Homicide and related grave offences")
@@ -606,6 +635,8 @@ class CCR:
         """
         driver = self.driver
         #Basic fee fields are within this HTML table
+        #Element ids are unique within table but could be duplicated within
+        #page, so items selected at table-level
         table = driver.find_element_by_id("basicFeeTable")
 
         #Claim element drop-down
@@ -613,34 +644,35 @@ class CCR:
 
         #Input fields are locked until Claim Element selected, so wait for
         #them to become available (look for style="display: none" attribute)
-        WebDriverWait(self.driver,10).until(lambda driver: table.find_element_by_id("ppe").get_attribute("style")!="display: none")
+        WebDriverWait(self.driver,10).until(lambda driver:table.find_element_by_id("ppe").get_attribute("style")!="display: none")
 
-        def update_field(elem_id, value):
-            """Update field if it's displayed
-            Nb - uses table value found above
-            Args:
-                elem_id - element id (str)
-                value - value to enter
-                """
+        #Complete the text fields
+        #Map field element ids to arguments
+        field_mapping =[
+        ("ppe", ppe), # PPE
+        ("numberOfAttendanceDays", attendance), # No. of Attendance Days
+        ("numberOfWitnesses", witnesses), # No. of prosecution witnesses
+        ("defendants", defendants), # No. of defendants (usually set automatically)
+        ("cases", cases), # No of cases (usually set automatically)
+        ]
+
+        #Update each in turn
+        #Below fairly generic - could move to dedicated method (Webdriver WebElement)
+        for elem_id, value in field_mapping:
+            #Only update if value supplied (as may sometimes want to leave
+            #original value in place)
             if value:
                 field = table.find_element_by_id(elem_id)
                 #Don't try to update if the field is not on display
-                #Note sure where ";" on end comes from! Don't see in source!
+                #(Not sure where terminal ";" comes from! Didn't see it in source!)
                 if field.get_attribute("style")!="display: none;":
-                    print ">>",elem_id, field.get_attribute("style")
+                    ##print ">>",elem_id, field.get_attribute("style")
                     table.find_element_by_id(elem_id).clear()
                     table.find_element_by_id(elem_id).send_keys(value)
                 else:
                     print "Field:", elem_id, "-not on display."
 
-        #Complete PPE, Numer of Attendance Days, No of Prosecution Witnesses
-        #No of Defendants and No of Cases fields
-        update_field("ppe", ppe)
-        update_field("numberOfAttendanceDays", attendance)
-        update_field("numberOfWitnesses", witnesses)
-        update_field("defendants", defendants)
-        update_field("cases", cases)
-
+        #Original old way
         """
         #PPE
         table.find_element_by_id("ppe").clear()
@@ -665,17 +697,41 @@ class CCR:
             table.find_element_by_id("cases").send_keys(cases)
         """
 
+    def misc_fee(self,
+                claim_element,
+                ref_no,
+                occurrence_date,
+                defendants,
+                quantity
+                ):
+        """Completes Miscellaneous Fees part of claim
+
+        """
+        driver = self.driver
+
+        #Expenses fields are within this HTML table
+        table = driver.find_element_by_id("miscFeeTable")
+        #Can be multiple rows. Need right one for this item
+        body = table.find_element_by_tag_name("tbody")
+        brows = body.find_elements_by_tag_name("tr")
+
+
+
     def expenses(self,
                 claim_element = "Conferences & Views - Car",
                 date_incurred = "01/10/2017",
                 description = "things",
                 vat_rate = "",
                 quantity = "1",
-                rate = "1.23"
+                rate = "1.23",
+                row = 0
                 ):
 
         """Complete expense - under construction!
         May needs updating because id's shift when new expenses row added
+
+        Args:
+            row: claim element row number
         """
         driver = self.driver
 
@@ -685,10 +741,23 @@ class CCR:
 
         #Expenses fields are within this HTML table
         table = driver.find_element_by_id("agfsExpensesTable")
-        #Can be multiple rows. Need bottom-most entry one in table body
+        #Can be multiple rows. Need right one for this item
         body = table.find_element_by_tag_name("tbody")
         brows = body.find_elements_by_tag_name("tr")
-        row = brows[-1]
+
+        #If required row does not exist, add it
+        rowcount = len(brows)
+        print "expenses row thing:",row, rowcount
+        if 1+row > rowcount:
+            deficiency = 1+row - rowcount
+            for _ in range(deficiency):
+                #"Add claim element" button in Expenses part of screen
+                driver.find_element_by_xpath("(//input[@value='Add Claim Element'])[3]").click()
+            #Refresh the list of rows
+            brows = body.find_elements_by_tag_name("tr")
+
+        #Set row to one wanted
+        row = brows[row]
 
         #Claim Element
         Select(row.find_element_by_id("billSubType")).select_by_visible_text(claim_element)
@@ -714,10 +783,8 @@ class CCR:
 
 
     def calc_fee(self):
-        """Presses Calculate Fee button then reads the calculated figures from the screen.
+        """Presses Calculate Fee button
         The Claim Screen must be already open for this to work
-        Returns:
-            calculated fees
         """
         driver = self.driver
         driver.find_element_by_xpath("//input[@value='Calculate Fee']").click()
@@ -903,16 +970,16 @@ class CCR:
         """
         driver=self.driver
         #current_win=self.driver.current_window_handle#find current window because we'll want to switch back to it later
-        alert=self.driver.switch_to_alert()#switch_to_alert is buggy. It always finds one even if none is present.
+        alert = self.driver.switch_to_alert()#switch_to_alert is buggy. It always finds one even if none is present.
         #Can only actualy tell if alert is present when try to interact with it, hence exception handling below.
         try:
-            t=alert.text
+            _ = alert.text
         #Warning - NoAlertPresentException needs to have been imported from selenium.common.exceptions
         except NoAlertPresentException:
             message = False
         else:
             message = True
-            #Accept the alert if
+            #Accept the alert if requested
             if accept:
                 alert.accept()
         #driver.switch_to_window(current_win)
@@ -926,13 +993,44 @@ class CCR:
             fout.write(driver.page_source.encode("utf-8"))
 
 
+def data_maker(value_format):
+    """Generates convenient values for testing
+    based on format of value_format argument.
+
+    Currently just produces relative dates but could be expanded
+
+    Args:
+        value_format - string defining format.
+            e.g. "#d-100" - 100 days before today's date as d/m/Y
+                 "#d+1" or "#d1" - tomorrow's date
+    Returns
+        value based on format string (if processed without problem) as string
+        , otherwise returns None
+    """
+    #Default return value
+    value = None
+    #Relative Date maker
+    if value_format[:2] in ("#d","#D"):
+        try:
+            delta = int(value_format[2:])
+        except exectpion as e:
+            return None
+        #Calculate date based on day interval supplied
+        today = datetime.date.today()
+        day_interval = datetime.timedelta(days=1)
+        run_date = today + day_interval*delta
+        value = run_date.strftime("%d/%m/%Y")
+    return value
+
+
+
 if __name__ == "__main__":
     print "Starting"
-    #Spreadsheet login
+    #Spreadsheet with data
     filename = "ccr_data(0.2).xlsx"
 
     #Replace filename with command-line argument if we have any
-    #>1 because first argument is this very file so doesn't count
+    #(>1 because first argument is this very Python file so doesn't count)
     if len(sys.argv)>1:
         filename = sys.argv[1:2]
     go = CCR(filename=filename)
